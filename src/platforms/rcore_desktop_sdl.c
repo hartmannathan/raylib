@@ -29,7 +29,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2013-2023 Ramon Santamaria (@raysan5) and contributors
+*   Copyright (c) 2013-2024 Ramon Santamaria (@raysan5) and contributors
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -969,9 +969,6 @@ void PollInputEvents(void)
     CORE.Input.Keyboard.keyPressedQueueCount = 0;
     CORE.Input.Keyboard.charPressedQueueCount = 0;
 
-    // Reset key repeats
-    for (int i = 0; i < MAX_KEYBOARD_KEYS; i++) CORE.Input.Keyboard.keyRepeatInFrame[i] = 0;
-
     // Reset mouse wheel
     CORE.Input.Mouse.currentWheelMove.x = 0;
     CORE.Input.Mouse.currentWheelMove.y = 0;
@@ -999,7 +996,7 @@ void PollInputEvents(void)
     CORE.Input.Touch.position[0] = CORE.Input.Mouse.currentPosition;
 
     int touchAction = -1;       // 0-TOUCH_ACTION_UP, 1-TOUCH_ACTION_DOWN, 2-TOUCH_ACTION_MOVE
-    bool gestureUpdate = false; // Flag to note gestures require to update
+    bool realTouch = false;     // Flag to differentiate real touch gestures from mouse ones
 
     // Register previous keys states
     // NOTE: Android supports up to 260 keys
@@ -1097,6 +1094,8 @@ void PollInputEvents(void)
                 KeyboardKey key = ConvertScancodeToKey(event.key.keysym.scancode);
                 if (key != KEY_NULL) CORE.Input.Keyboard.currentKeyState[key] = 1;
 
+                if (event.key.repeat) CORE.Input.Keyboard.keyRepeatInFrame[key] = 1;
+
                 // TODO: Put exitKey verification outside the switch?
                 if (CORE.Input.Keyboard.currentKeyState[CORE.Input.Keyboard.exitKey])
                 {
@@ -1110,6 +1109,29 @@ void PollInputEvents(void)
                 if (key != KEY_NULL) CORE.Input.Keyboard.currentKeyState[key] = 0;
             } break;
 
+            case SDL_TEXTINPUT:
+            {
+                // NOTE: event.text.text data comes an UTF-8 text sequence but we register codepoints (int)
+
+                int codepointSize = 0;
+
+                // Check if there is space available in the key queue
+                if (CORE.Input.Keyboard.keyPressedQueueCount < MAX_KEY_PRESSED_QUEUE)
+                {
+                    // Add character (key) to the queue
+                    CORE.Input.Keyboard.keyPressedQueue[CORE.Input.Keyboard.keyPressedQueueCount] = GetCodepointNext(event.text.text, &codepointSize);
+                    CORE.Input.Keyboard.keyPressedQueueCount++;
+                }
+
+                // Check if there is space available in the queue
+                if (CORE.Input.Keyboard.charPressedQueueCount < MAX_CHAR_PRESSED_QUEUE)
+                {
+                    // Add character (codepoint) to the queue
+                    CORE.Input.Keyboard.charPressedQueue[CORE.Input.Keyboard.charPressedQueueCount] = GetCodepointNext(event.text.text, &codepointSize);
+                    CORE.Input.Keyboard.charPressedQueueCount++;
+                }
+            } break;
+
             // Check mouse events
             case SDL_MOUSEBUTTONDOWN:
             {
@@ -1120,9 +1142,9 @@ void PollInputEvents(void)
                 else if (btn == 1) btn = 2;
 
                 CORE.Input.Mouse.currentButtonState[btn] = 1;
+                CORE.Input.Touch.currentTouchState[btn] = 1;
 
                 touchAction = 1;
-                gestureUpdate = true;
             } break;
             case SDL_MOUSEBUTTONUP:
             {
@@ -1133,9 +1155,9 @@ void PollInputEvents(void)
                 else if (btn == 1) btn = 2;
 
                 CORE.Input.Mouse.currentButtonState[btn] = 0;
+                CORE.Input.Touch.currentTouchState[btn] = 0;
 
                 touchAction = 0;
-                gestureUpdate = true;
             } break;
             case SDL_MOUSEWHEEL:
             {
@@ -1158,7 +1180,38 @@ void PollInputEvents(void)
 
                 CORE.Input.Touch.position[0] = CORE.Input.Mouse.currentPosition;
                 touchAction = 2;
-                gestureUpdate = true;
+            } break;
+
+            // Check touch events
+            // NOTE: These cases need to be reviewed on a real touch screen
+            case SDL_FINGERDOWN:
+            {
+                const int touchId = (int)event.tfinger.fingerId;
+                CORE.Input.Touch.currentTouchState[touchId] = 1;
+                CORE.Input.Touch.position[touchId].x = event.tfinger.x * CORE.Window.screen.width;
+                CORE.Input.Touch.position[touchId].y = event.tfinger.y * CORE.Window.screen.height;
+
+                touchAction = 1;
+                realTouch = true;
+            } break;
+            case SDL_FINGERUP:
+            {
+                const int touchId = (int)event.tfinger.fingerId;
+                CORE.Input.Touch.currentTouchState[touchId] = 0;
+                CORE.Input.Touch.position[touchId].x = event.tfinger.x * CORE.Window.screen.width;
+                CORE.Input.Touch.position[touchId].y = event.tfinger.y * CORE.Window.screen.height;
+
+                touchAction = 0;
+                realTouch = true;
+            } break;
+            case SDL_FINGERMOTION:
+            {
+                const int touchId = (int)event.tfinger.fingerId;
+                CORE.Input.Touch.position[touchId].x = event.tfinger.x * CORE.Window.screen.width;
+                CORE.Input.Touch.position[touchId].y = event.tfinger.y * CORE.Window.screen.height;
+
+                touchAction = 2;
+                realTouch = true;
             } break;
 
             // Check gamepad events
@@ -1183,7 +1236,7 @@ void PollInputEvents(void)
         }
 
 #if defined(SUPPORT_GESTURES_SYSTEM)
-        if (gestureUpdate)
+        if (touchAction > -1)
         {
             // Process mouse events as touches to be able to use mouse-gestures
             GestureEvent gestureEvent = { 0 };
@@ -1198,7 +1251,7 @@ void PollInputEvents(void)
             gestureEvent.pointCount = 1;
 
             // Register touch points position, only one point registered
-            if (touchAction == 2) gestureEvent.position[0] = CORE.Input.Touch.position[0];
+            if (touchAction == 2 || realTouch) gestureEvent.position[0] = CORE.Input.Touch.position[0];
             else gestureEvent.position[0] = GetMousePosition();
 
             // Normalize gestureEvent.position[0] for CORE.Window.screen.width and CORE.Window.screen.height
@@ -1207,6 +1260,8 @@ void PollInputEvents(void)
 
             // Gesture data is sent to gestures-system for processing
             ProcessGestureEvent(gestureEvent);
+
+            touchAction = -1;
         }
 #endif
     }
@@ -1359,6 +1414,11 @@ int InitPlatform(void)
         //if (platform.gamepadgamepad == NULL) TRACELOG(LOG_WARNING, "PLATFORM: Unable to open game controller [ERROR: %s]", SDL_GetError());
     }
 
+    // Disable mouse events being interpreted as touch events
+    // NOTE: This is wanted because there are SDL_FINGER* events available which provide unique data
+    //       Due to the way PollInputEvents() and rgestures.h are currently implemented, setting this won't break SUPPORT_MOUSE_GESTURES
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     //----------------------------------------------------------------------------
 
@@ -1366,6 +1426,10 @@ int InitPlatform(void)
     //----------------------------------------------------------------------------
     // NOTE: No need to call InitTimer(), let SDL manage it internally
     CORE.Time.previous = GetTime();     // Get time as double
+
+    #if defined(_WIN32) && defined(SUPPORT_WINMM_HIGHRES_TIMER) && !defined(SUPPORT_BUSY_WAIT_LOOP)
+    SDL_SetHint(SDL_HINT_TIMER_RESOLUTION, "1");     // SDL equivalent of timeBeginPeriod() and timeEndPeriod()
+    #endif
     //----------------------------------------------------------------------------
 
     // Initialize storage system

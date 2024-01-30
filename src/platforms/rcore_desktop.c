@@ -30,7 +30,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2013-2023 Ramon Santamaria (@raysan5) and contributors
+*   Copyright (c) 2013-2024 Ramon Santamaria (@raysan5) and contributors
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -123,10 +123,11 @@ static void WindowIconifyCallback(GLFWwindow *window, int iconified);           
 static void WindowMaximizeCallback(GLFWwindow* window, int maximized);                     // GLFW3 Window Maximize Callback, runs when window is maximized
 static void WindowFocusCallback(GLFWwindow *window, int focused);                          // GLFW3 WindowFocus Callback, runs when window get/lose focus
 static void WindowDropCallback(GLFWwindow *window, int count, const char **paths);         // GLFW3 Window Drop Callback, runs when drop files into window
+static void WindowContentScaleCallback(GLFWwindow *window, float scalex, float scaley);    // GLFW3 Window Content Scale Callback, runs when window changes scale
 
 // Input callbacks events
 static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);  // GLFW3 Keyboard Callback, runs on key pressed
-static void CharCallback(GLFWwindow *window, unsigned int key);                            // GLFW3 Char Key Callback, runs on key pressed (get char value)
+static void CharCallback(GLFWwindow *window, unsigned int codepoint);                      // GLFW3 Char Callback, runs on key pressed (get codepoint value)
 static void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods);     // GLFW3 Mouse Button Callback, runs on mouse button pressed
 static void MouseCursorPosCallback(GLFWwindow *window, double x, double y);                // GLFW3 Cursor Position Callback, runs on mouse move
 static void MouseScrollCallback(GLFWwindow *window, double xoffset, double yoffset);       // GLFW3 Scrolling Callback, runs on mouse wheel
@@ -941,31 +942,8 @@ Vector2 GetWindowPosition(void)
 // Get window scale DPI factor for current monitor
 Vector2 GetWindowScaleDPI(void)
 {
-    float xdpi = 1.0;
-    float ydpi = 1.0;
-    Vector2 scale = { 1.0f, 1.0f };
-    Vector2 windowPos = GetWindowPosition();
-
-    int monitorCount = 0;
-    GLFWmonitor **monitors = glfwGetMonitors(&monitorCount);
-
-    // Check window monitor
-    for (int i = 0; i < monitorCount; i++)
-    {
-        glfwGetMonitorContentScale(monitors[i], &xdpi, &ydpi);
-
-        int xpos, ypos, width, height;
-        glfwGetMonitorWorkarea(monitors[i], &xpos, &ypos, &width, &height);
-
-        if ((windowPos.x >= xpos) && (windowPos.x < xpos + width) &&
-            (windowPos.y >= ypos) && (windowPos.y < ypos + height))
-        {
-            scale.x = xdpi;
-            scale.y = ydpi;
-            break;
-        }
-    }
-
+    Vector2 scale = {0};
+    glfwGetWindowContentScale(platform.handle, &scale.x, &scale.y);
     return scale;
 }
 
@@ -1553,6 +1531,11 @@ int InitPlatform(void)
     glfwSetWindowFocusCallback(platform.handle, WindowFocusCallback);
     glfwSetDropCallback(platform.handle, WindowDropCallback);
 
+    if ((CORE.Window.flags & FLAG_WINDOW_HIGHDPI) > 0)
+    {
+       glfwSetWindowContentScaleCallback(platform.handle, WindowContentScaleCallback);
+    }
+
     // Set input callback events
     glfwSetKeyCallback(platform.handle, KeyCallback);
     glfwSetCharCallback(platform.handle, CharCallback);
@@ -1638,6 +1621,11 @@ static void WindowSizeCallback(GLFWwindow *window, int width, int height)
     // NOTE: Postprocessing texture is not scaled to new size
 }
 
+static void WindowContentScaleCallback(GLFWwindow *window, float scalex, float scaley)
+{
+    CORE.Window.screenScale = MatrixScale(scalex, scaley, 1.0f);
+}
+
 // GLFW3 WindowIconify Callback, runs when window is minimized/restored
 static void WindowIconifyCallback(GLFWwindow *window, int iconified)
 {
@@ -1714,10 +1702,10 @@ static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, i
     if ((key == CORE.Input.Keyboard.exitKey) && (action == GLFW_PRESS)) glfwSetWindowShouldClose(platform.handle, GLFW_TRUE);
 }
 
-// GLFW3 Char Key Callback, runs on key down (gets equivalent unicode char value)
-static void CharCallback(GLFWwindow *window, unsigned int key)
+// GLFW3 Char Callback, get unicode codepoint value
+static void CharCallback(GLFWwindow *window, unsigned int codepoint)
 {
-    //TRACELOG(LOG_DEBUG, "Char Callback: KEY:%i(%c)", key, key);
+    //TRACELOG(LOG_DEBUG, "Char Callback: Codepoint: %i", codepoint);
 
     // NOTE: Registers any key down considering OS keyboard layout but
     // does not detect action events, those should be managed by user...
@@ -1728,7 +1716,7 @@ static void CharCallback(GLFWwindow *window, unsigned int key)
     if (CORE.Input.Keyboard.charPressedQueueCount < MAX_CHAR_PRESSED_QUEUE)
     {
         // Add character to the queue
-        CORE.Input.Keyboard.charPressedQueue[CORE.Input.Keyboard.charPressedQueueCount] = key;
+        CORE.Input.Keyboard.charPressedQueue[CORE.Input.Keyboard.charPressedQueueCount] = codepoint;
         CORE.Input.Keyboard.charPressedQueueCount++;
     }
 }
@@ -1739,7 +1727,8 @@ static void MouseButtonCallback(GLFWwindow *window, int button, int action, int 
     // WARNING: GLFW could only return GLFW_PRESS (1) or GLFW_RELEASE (0) for now,
     // but future releases may add more actions (i.e. GLFW_REPEAT)
     CORE.Input.Mouse.currentButtonState[button] = action;
-
+    CORE.Input.Touch.currentTouchState[button] = action;
+    
 #if defined(SUPPORT_GESTURES_SYSTEM) && defined(SUPPORT_MOUSE_GESTURES)
     // Process mouse events as touches to be able to use mouse-gestures
     GestureEvent gestureEvent = { 0 };

@@ -20,7 +20,7 @@
 *
 *   LICENSE: zlib/libpng
 *
-*   Copyright (c) 2022-2023 Christoph Wagner (@Crydsch) & Ramon Santamaria (@raysan5)
+*   Copyright (c) 2022-2024 Christoph Wagner (@Crydsch) & Ramon Santamaria (@raysan5)
 *
 *   This software is provided "as-is", without any express or implied warranty. In no event
 *   will the authors be held liable for any damages arising from the use of this software.
@@ -202,17 +202,9 @@ RLAPI Matrix GetCameraProjectionMatrix(Camera* camera, float aspect);
 
 // Camera mouse movement sensitivity
 #define CAMERA_MOUSE_MOVE_SENSITIVITY                   0.003f     // TODO: it should be independant of framerate
-#define CAMERA_MOUSE_SCROLL_SENSITIVITY                 1.5f
 
+// Camera orbital speed in CAMERA_ORBITAL mode
 #define CAMERA_ORBITAL_SPEED                            0.5f       // Radians per second
-
-
-#define CAMERA_FIRST_PERSON_STEP_TRIGONOMETRIC_DIVIDER  8.0f
-#define CAMERA_FIRST_PERSON_STEP_DIVIDER                30.0f
-#define CAMERA_FIRST_PERSON_WAVING_DIVIDER              200.0f
-
-// PLAYER (used by camera)
-#define PLAYER_MOVEMENT_SENSITIVITY                     20.0f
 
 //----------------------------------------------------------------------------------
 // Types and Structures Definition
@@ -449,7 +441,7 @@ void UpdateCamera(Camera *camera, int mode)
 
     bool moveInWorldPlane = ((mode == CAMERA_FIRST_PERSON) || (mode == CAMERA_THIRD_PERSON));
     bool rotateAroundTarget = ((mode == CAMERA_THIRD_PERSON) || (mode == CAMERA_ORBITAL));
-    bool lockView = ((mode == CAMERA_FIRST_PERSON) || (mode == CAMERA_THIRD_PERSON) || (mode == CAMERA_ORBITAL));
+    bool lockView = ((mode == CAMERA_FREE) || (mode == CAMERA_FIRST_PERSON) || (mode == CAMERA_THIRD_PERSON) || (mode == CAMERA_ORBITAL));
     bool rotateUp = false;
 
     if (mode == CAMERA_ORBITAL)
